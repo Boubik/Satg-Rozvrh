@@ -234,6 +234,8 @@ function stag_rozvrh_render_settings_page()
         } else {
             echo '<p><strong>Poslední aktualizace dat z API:</strong> momentálně není aktualizovaný.</p>';
         }
+        echo '<p>[stag_rozvrh staglogin="your_login"]</p>';
+        echo '<p>[stag_rozvrh ucitidno="your_teacher_id"]</p>';
         ?>
 
         <script>
