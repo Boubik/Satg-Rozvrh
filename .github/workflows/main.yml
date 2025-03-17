@@ -1,0 +1,36 @@
+name: Build and Release STAG Rozvrh Plugin
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build_release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Set Build Date
+        id: build_date
+        run: echo "build_date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_OUTPUT
+
+      - name: Create ZIP Archive of Plugin
+        run: |
+          zip -r stag-rozvrh.zip stag-rozvrh
+      
+      - name: Create GitHub Release
+        id: create_release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: v1.0.${{ github.run_number }}
+          name: "Release v1.0.${{ github.run_number }}"
+          body: |
+            **STAG Rozvrh Plugin Release**
+
+            Last build date (UTC): ${{ steps.build_date.outputs.build_date }}
+
+            This release was automatically generated upon push to the main branch.
+          artifacts: stag-rozvrh.zip
