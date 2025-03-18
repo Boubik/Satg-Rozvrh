@@ -168,17 +168,6 @@ function stag_rozvrh_render_settings_page()
                     </td>
                 </tr>
                 <tr valign="top">
-                    <th scope="row">Pole rozvrhu k zobrazení</th>
-                    <td>
-                        <?php
-                        foreach ($all_fields as $key => $label) {
-                            $checked = in_array($key, (array)$fields) ? 'checked' : '';
-                            echo '<label><input type="checkbox" name="stag_fields[]" value="' . esc_attr($key) . '" ' . $checked . ' /> ' . esc_html($label) . '</label><br>';
-                        }
-                        ?>
-                    </td>
-                </tr>
-                <tr valign="top">
                     <th scope="row">Doba platnosti cache (dny)</th>
                     <td>
                         <input type="number" name="stag_cache_duration" value="<?php echo esc_attr($cache_dur); ?>" min="0" />
