@@ -16,7 +16,7 @@ if (! defined('ABSPATH')) {
 define('STAG_ROZVRH_DEFAULT_API_URL', 'https://stag-demo.zcu.cz/ws/');
 
 /**
- * Pomocná funkce pro extrakci času z možného pole (API někdy vrací např. ["value" => "12:30"] místo stringu).
+ * Helper function for extracting time from a possible array structure.
  */
 function stag_rozvrh_extract_time($val)
 {
@@ -27,33 +27,34 @@ function stag_rozvrh_extract_time($val)
 }
 
 /**
- * Nastavení výchozích hodnot při aktivaci pluginu.
+ * Set default options on plugin activation.
  */
 function stag_rozvrh_default_options()
 {
     $defaults = array(
         'api_url'         => STAG_ROZVRH_DEFAULT_API_URL,
-        'api_user'        => '',
-        'api_pass'        => '',
         'fields'          => array('predmet', 'typ', 'cas', 'mistnost'),
-        'cache_duration'  => 1,       // doba cache v dnech (výchozí 1 den)
-        'ls_start'        => '02-01', // začátek letního semestru
-        'zs_start'        => '09-01', // začátek zimního semestru
-        'custom_header'   => '',
+        'cache_duration'  => 1,       // cache duration in days
+        'ls_start'        => '02-01', // summer semester start
+        'zs_start'        => '09-01', // winter semester start
+        // Removed custom_header
         'custom_row'      => ''
     );
     if (get_option('stag_rozvrh_settings') === false) {
         add_option('stag_rozvrh_settings', $defaults);
     }
-    // Vložíme i volbu, kam budeme ukládat čas poslední aktualizace
     if (get_option('stag_rozvrh_last_update') === false) {
         add_option('stag_rozvrh_last_update', 0);
+    }
+    // Create separate option for API credentials if not exists.
+    if (get_option('stag_rozvrh_api_credentials') === false) {
+        add_option('stag_rozvrh_api_credentials', array('api_user' => '', 'api_pass' => ''));
     }
 }
 register_activation_hook(__FILE__, 'stag_rozvrh_default_options');
 
 /**
- * Přidání položky do menu "Nastavení".
+ * Add settings page to the admin menu.
  */
 add_action('admin_menu', function () {
     add_options_page(
@@ -66,15 +67,15 @@ add_action('admin_menu', function () {
 });
 
 /**
- * Registrace nastavení (group).
+ * Register settings.
  */
 add_action('admin_init', function () {
     register_setting('stag_rozvrh_settings_group', 'stag_rozvrh_settings');
-    // Volbu 'stag_rozvrh_last_update' neregistrujeme jako user setting, jen ji zobrazujeme (je to spíše informativní).
+    // API credentials are stored separately.
 });
 
 /**
- * Vykreslení stránky nastavení.
+ * Render the settings page with two forms.
  */
 function stag_rozvrh_render_settings_page()
 {
@@ -82,70 +83,82 @@ function stag_rozvrh_render_settings_page()
         return;
     }
 
-    $options       = get_option('stag_rozvrh_settings', array());
-    $api_url       = $options['api_url']         ?? STAG_ROZVRH_DEFAULT_API_URL;
-    $api_user      = $options['api_user']        ?? '';
-    $api_pass      = $options['api_pass']        ?? '';
-    $fields        = $options['fields']          ?? array('predmet', 'typ', 'cas', 'mistnost');
-    $cache_dur     = intval($options['cache_duration'] ?? 1);
-    $ls_start      = $options['ls_start']        ?? '';
-    $zs_start      = $options['zs_start']        ?? '';
-    $custom_header = $options['custom_header']   ?? '';
-    $custom_row    = $options['custom_row']      ?? '';
+    // Load general settings.
+    $options    = get_option('stag_rozvrh_settings', array());
+    $api_url    = $options['api_url'] ?? STAG_ROZVRH_DEFAULT_API_URL;
+    $fields     = $options['fields'] ?? array('predmet', 'typ', 'cas', 'mistnost');
+    $cache_dur  = intval($options['cache_duration'] ?? 1);
+    $ls_start   = $options['ls_start'] ?? '';
+    $zs_start   = $options['zs_start'] ?? '';
+    $custom_row = $options['custom_row'] ?? '';
 
-    // Zpracování odeslání formuláře
+    // Load API credentials.
+    $creds    = get_option('stag_rozvrh_api_credentials', array('api_user' => '', 'api_pass' => ''));
+    $api_user = $creds['api_user'] ?? '';
+    $api_pass = $creds['api_pass'] ?? '';
+
+    // Process general settings form submission.
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['stag_rozvrh_nonce'])) {
         if (!wp_verify_nonce($_POST['stag_rozvrh_nonce'], 'stag_rozvrh_save_settings')) {
-            echo '<div class="error"><p>Neplatná bezpečnostní kontrola (nonce).</p></div>';
+            echo '<div class="error"><p>Neplatná bezpečnostní kontrola (nonce) pro nastavení pluginu.</p></div>';
         } else {
             if (isset($_POST['stag_rozvrh_flush'])) {
-                // Vymazat cache
+                // Flush cache.
                 stag_rozvrh_flush_cache();
-                // Resetovat datum poslední aktualizace na 0, což vyvolá zprávu "momentálně není aktualizovaný"
                 update_option('stag_rozvrh_last_update', 0);
                 echo '<div class="updated"><p>Cache byla vymazána.</p></div>';
             } else {
-                // Uložit nastavení
+                // Save general plugin settings.
                 $new_options = array();
-                $new_options['api_url']         = sanitize_text_field($_POST['stag_api_url']        ?? '');
-                $new_options['api_user']        = sanitize_text_field($_POST['stag_api_user']       ?? '');
-                $new_options['api_pass']        = sanitize_text_field($_POST['stag_api_pass']       ?? '');
-                $new_options['fields']          = isset($_POST['stag_fields']) ? array_map('sanitize_text_field', (array)$_POST['stag_fields']) : array();
-                $new_options['cache_duration']  = intval($_POST['stag_cache_duration'] ?? 1);
-                $new_options['ls_start']        = sanitize_text_field($_POST['stag_ls_start']       ?? '');
-                $new_options['zs_start']        = sanitize_text_field($_POST['stag_zs_start']       ?? '');
-                $new_options['custom_header']   = wp_kses_post($_POST['stag_custom_header']         ?? '');
-                $new_options['custom_row']      = wp_kses_post($_POST['stag_custom_row']            ?? '');
-
+                $new_options['api_url']        = sanitize_text_field($_POST['stag_api_url'] ?? '');
+                $new_options['fields']         = isset($_POST['stag_fields']) ? array_map('sanitize_text_field', (array)$_POST['stag_fields']) : array();
+                $new_options['cache_duration'] = intval($_POST['stag_cache_duration'] ?? 1);
+                $new_options['ls_start']       = sanitize_text_field($_POST['stag_ls_start'] ?? '');
+                $new_options['zs_start']       = sanitize_text_field($_POST['stag_zs_start'] ?? '');
+                $new_options['custom_row']     = wp_kses_post($_POST['stag_custom_row'] ?? '');
                 update_option('stag_rozvrh_settings', $new_options);
-                echo '<div class="updated"><p>Nastavení bylo uloženo.</p></div>';
+                echo '<div class="updated"><p>Nastavení pluginu bylo uloženo.</p></div>';
 
-                // Aktualizace lokálních proměnných
-                $api_url       = $new_options['api_url'];
-                $api_user      = $new_options['api_user'];
-                $api_pass      = $new_options['api_pass'];
-                $fields        = $new_options['fields'];
-                $cache_dur     = $new_options['cache_duration'];
-                $ls_start      = $new_options['ls_start'];
-                $zs_start      = $new_options['zs_start'];
-                $custom_header = $new_options['custom_header'];
-                $custom_row    = $new_options['custom_row'];
+                // Update local variables.
+                $api_url    = $new_options['api_url'];
+                $fields     = $new_options['fields'];
+                $cache_dur  = $new_options['cache_duration'];
+                $ls_start   = $new_options['ls_start'];
+                $zs_start   = $new_options['zs_start'];
+                $custom_row = $new_options['custom_row'];
             }
         }
     }
 
-    // Možná pole k zobrazení
-    $all_fields = array(
-        'predmet'  => 'Předmět',
-        'typ'      => 'Typ akce',
-        'cas'      => 'Čas',
-        'ucitel'   => 'Učitel',
-        'mistnost' => 'Místnost'
-    );
+    // Process API credentials form submission.
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['stag_api_nonce'])) {
+        if (!wp_verify_nonce($_POST['stag_api_nonce'], 'stag_api_save_settings')) {
+            echo '<div class="error"><p>Neplatná bezpečnostní kontrola (nonce) pro API přihlašovací údaje.</p></div>';
+        } else {
+            $new_api_user = sanitize_text_field($_POST['stag_api_user'] ?? '');
+            $new_api_pass = sanitize_text_field($_POST['stag_api_pass'] ?? '');
+            $current_creds = get_option('stag_rozvrh_api_credentials', array('api_user' => '', 'api_pass' => ''));
 
+            // Update username always.
+            $current_creds['api_user'] = $new_api_user;
+            // Only update password if a new non-empty value is provided.
+            if (!empty($new_api_pass)) {
+                $current_creds['api_pass'] = $new_api_pass;
+            }
+            update_option('stag_rozvrh_api_credentials', $current_creds);
+            echo '<div class="updated"><p>API přihlašovací údaje byly uloženy.</p></div>';
+
+            // Update local variables.
+            $api_user = $current_creds['api_user'];
+            $api_pass = $current_creds['api_pass'];
+        }
+    }
 ?>
     <div class="wrap">
         <h1>Nastavení STAG Rozvrh</h1>
+
+        <!-- General Plugin Settings Form -->
+        <h2>Obecná nastavení pluginu</h2>
         <form method="post" action="">
             <?php wp_nonce_field('stag_rozvrh_save_settings', 'stag_rozvrh_nonce'); ?>
             <table class="form-table">
@@ -154,18 +167,6 @@ function stag_rozvrh_render_settings_page()
                     <td>
                         <input type="url" name="stag_api_url" value="<?php echo esc_attr($api_url); ?>" size="50" />
                         <p class="description">Např. <?php echo esc_html(STAG_ROZVRH_DEFAULT_API_URL); ?></p>
-                    </td>
-                </tr>
-                <tr valign="top">
-                    <th scope="row">API uživatelské jméno</th>
-                    <td>
-                        <input type="text" name="stag_api_user" value="<?php echo esc_attr($api_user); ?>" />
-                    </td>
-                </tr>
-                <tr valign="top">
-                    <th scope="row">API heslo</th>
-                    <td>
-                        <input type="password" name="stag_api_pass" value="<?php echo esc_attr($api_pass); ?>" />
                     </td>
                 </tr>
                 <tr valign="top">
@@ -190,13 +191,6 @@ function stag_rozvrh_render_settings_page()
                     </td>
                 </tr>
                 <tr valign="top">
-                    <th scope="row">Vlastní hlavička výpisu</th>
-                    <td>
-                        <textarea name="stag_custom_header" rows="3" cols="60"><?php echo esc_textarea($custom_header); ?></textarea>
-                        <p class="description">Text (HTML) zobrazený nad seznamem akcí.</p>
-                    </td>
-                </tr>
-                <tr valign="top">
                     <th scope="row">Vlastní formát řádku</th>
                     <td>
                         <textarea id="stag_custom_row" name="stag_custom_row" rows="4" cols="60"><?php echo esc_textarea($custom_row); ?></textarea>
@@ -204,19 +198,43 @@ function stag_rozvrh_render_settings_page()
                         <p class="description">
                             Použijte placeholdery: <code>{predmet}</code>, <code>{typ}</code>, <code>{cas_od}</code>, <code>{cas_do}</code>, <code>{ucitel}</code>, <code>{mistnost}</code>.<br>
                             Např.: <em>{predmet} čas: od {cas_od} do {cas_do}</em><br>
-                            Pokud chcete nový řádek, vložte <code>\n</code> (nahradí se za <code>&lt;br></code>).
+                            Pokud chcete nový řádek, vložte <code>\n</code> (nahradí se za <code>&lt;br&gt;</code>).
                         </p>
                     </td>
                 </tr>
             </table>
             <p>
-                <input type="submit" name="submit" class="button button-primary" value="Uložit změny">
+                <input type="submit" name="submit" class="button button-primary" value="Uložit obecná nastavení">
                 <input type="submit" name="stag_rozvrh_flush" class="button button-secondary" value="Vymazat cache">
             </p>
         </form>
 
+        <!-- API Credentials Settings Form -->
+        <h2>API Přihlašovací údaje</h2>
+        <form method="post" action="">
+            <?php wp_nonce_field('stag_api_save_settings', 'stag_api_nonce'); ?>
+            <table class="form-table">
+                <tr valign="top">
+                    <th scope="row">API uživatelské jméno</th>
+                    <td>
+                        <input type="text" name="stag_api_user" value="<?php echo esc_attr($api_user); ?>" />
+                    </td>
+                </tr>
+                <tr valign="top">
+                    <th scope="row">API heslo</th>
+                    <td>
+                        <input type="password" name="stag_api_pass" placeholder="<?php echo ($api_pass ? '********' : ''); ?>" value="" />
+                        <p class="description">Zadejte nové heslo pro změnu, nebo ponechte prázdné.</p>
+                    </td>
+                </tr>
+            </table>
+            <p>
+                <input type="submit" name="submit_api" class="button button-primary" value="Uložit API přihlašovací údaje">
+            </p>
+        </form>
+
         <?php
-        // Zobrazení poslední aktualizace z DB (pokud nějaká proběhla)
+        // Display last update information.
         $last_update = get_option('stag_rozvrh_last_update', 0);
         echo '<hr>';
         if ($last_update) {
@@ -239,7 +257,7 @@ function stag_rozvrh_render_settings_page()
 }
 
 /**
- * Vymazání cache pluginu (transientů).
+ * Flush the plugin cache (transients).
  */
 function stag_rozvrh_flush_cache()
 {
@@ -252,7 +270,7 @@ function stag_rozvrh_flush_cache()
 }
 
 /**
- * Určení aktuálního semestru (LS/ZS) podle data.
+ * Determine the current semester (LS/ZS) based on today's date.
  */
 function stag_get_current_semester()
 {
@@ -280,7 +298,7 @@ function stag_get_current_semester()
 }
 
 /**
- * Získání ID učitele z API (s cache).
+ * Get teacher ID with caching.
  */
 function stag_get_teacher_id($stagLogin)
 {
@@ -291,9 +309,10 @@ function stag_get_teacher_id($stagLogin)
     }
 
     $options = get_option('stag_rozvrh_settings', array());
-    $api_url  = $options['api_url']  ?? STAG_ROZVRH_DEFAULT_API_URL;
-    $api_user = $options['api_user'] ?? '';
-    $api_pass = $options['api_pass'] ?? '';
+    $api_url = $options['api_url'] ?? STAG_ROZVRH_DEFAULT_API_URL;
+    $creds   = get_option('stag_rozvrh_api_credentials', array('api_user' => '', 'api_pass' => ''));
+    $api_user = $creds['api_user'] ?? '';
+    $api_pass = $creds['api_pass'] ?? '';
 
     if (empty($stagLogin) || empty($api_user) || empty($api_pass)) {
         return false;
@@ -317,14 +336,13 @@ function stag_get_teacher_id($stagLogin)
         return false;
     }
 
-    // Uložit do cache (bez expirace)
+    // Cache the teacher ID indefinitely.
     set_transient($transient_key, $teacherId, 0);
     return $teacherId;
 }
 
 /**
- * Získání rozvrhu učitele (s cache). Data v JSON.
- * Po úspěšném načtení aktualizujeme 'stag_rozvrh_last_update'.
+ * Get the schedule for a teacher with caching.
  */
 function stag_get_schedule($teacherId, $desired_year, $desired_sem)
 {
@@ -338,9 +356,10 @@ function stag_get_schedule($teacherId, $desired_year, $desired_sem)
         return $schedule;
     }
 
-    $api_url  = $options['api_url']  ?? STAG_ROZVRH_DEFAULT_API_URL;
-    $api_user = $options['api_user'] ?? '';
-    $api_pass = $options['api_pass'] ?? '';
+    $api_url = $options['api_url'] ?? STAG_ROZVRH_DEFAULT_API_URL;
+    $creds   = get_option('stag_rozvrh_api_credentials', array('api_user' => '', 'api_pass' => ''));
+    $api_user = $creds['api_user'] ?? '';
+    $api_pass = $creds['api_pass'] ?? '';
 
     if (empty($teacherId) || empty($api_user) || empty($api_pass)) {
         return false;
@@ -377,62 +396,45 @@ function stag_get_schedule($teacherId, $desired_year, $desired_sem)
     } elseif (isset($data[0]['rozvrhovaAkce'])) {
         $events = $data[0]['rozvrhovaAkce'];
     } elseif (is_array($data) && isset($data[0]) && isset($data[0]['nazev'])) {
-        // Může to být rovnou seznam akcí
         $events = $data;
     }
 
-    // Pokud se nám podařilo získat data, uložíme do cache a zapíšeme čas do DB
     $schedule = array('data' => $events);
     set_transient($transient_key, $schedule, $cache_sec);
-
-    // Uložit čas poslední aktualizace do plugin option
     update_option('stag_rozvrh_last_update', time());
 
     return $schedule;
 }
 
 /**
- * Vykreslení rozvrhu – bez jakékoliv dekorace (žádné styly, tabulka se generuje bez inline CSS).
+ * Render the schedule output.
  */
 function stag_render_schedule($schedule, $settings)
 {
-    $custom_header = $settings['custom_header'] ?? '';
-    $custom_row    = $settings['custom_row']    ?? '';
-    $fields        = $settings['fields']        ?? array('predmet', 'typ', 'cas', 'mistnost');
-
-    // Začneme prázdným $output
+    // Only custom row formatting (the custom header has been removed).
+    $custom_row = $settings['custom_row'] ?? '';
+    $fields = $settings['fields'] ?? array('predmet', 'typ', 'cas', 'mistnost');
     $output = '';
 
-    // Pokud je vyplněna vlastní hlavička, přidáme ji bez stylů
-    if (!empty($custom_header)) {
-        $output .= $custom_header . "\n";
-    }
-
-    // Pokud je vyplněn vlastní formát řádku, vypisujeme řádek za řádkem
     if (!empty($custom_row)) {
         foreach ($schedule as $event) {
             $cas_od = stag_rozvrh_extract_time($event['hodinaSkutOd'] ?? $event['hodinaOd'] ?? '');
             $cas_do = stag_rozvrh_extract_time($event['hodinaSkutDo'] ?? $event['hodinaDo'] ?? '');
-
             $replacements = array(
-                '{predmet}'  => $event['predmet']   ?? '',
+                '{predmet}'  => $event['predmet']  ?? '',
                 '{typ}'      => ($event['typAkce'] ?? $event['typAkceZkr']) ?? '',
                 '{cas_od}'   => $cas_od,
                 '{cas_do}'   => $cas_do,
                 '{ucitel}'   => $event['vsichniUciteleJmenaTituly'] ?? '',
                 '{mistnost}' => $event['mistnost'] ?? ''
             );
-
             if (isset($event['predmet'])) {
                 $row = str_replace(array_keys($replacements), array_values($replacements), $custom_row);
-                // Nahrazení doslovného "\n" za <br>
                 $row = str_replace('\n', '<br>', $row);
-                // Přidáme do výstupu, třeba s mezerou
                 $output .= $row . "\n";
             }
         }
     } else {
-        // Standardní tabulkový výpis bez inline stylů
         $output .= "<table border=\"1\" cellpadding=\"5\" cellspacing=\"0\">\n";
         $output .= "<thead><tr>\n";
         if (in_array('predmet', $fields))   $output .= "<th>Předmět</th>\n";
@@ -491,7 +493,7 @@ function stag_render_schedule($schedule, $settings)
 }
 
 /**
- * Shortcode: [stag_rozvrh stagLogin="baroch" semestr="LS|ZS"]
+ * Shortcode: [stag_rozvrh staglogin="baroch" semestr="LS|ZS"]
  */
 add_shortcode('stag_rozvrh', 'stag_rozvrh_shortcode');
 function stag_rozvrh_shortcode($atts)
@@ -504,20 +506,16 @@ function stag_rozvrh_shortcode($atts)
 
     $semInput = strtoupper(sanitize_text_field($a['semestr']));
 
-    // Pokud je zadáno ID učitele, použijeme jej přímo
+    // Use teacher ID directly if provided.
     if (!empty($a['ucitidno'])) {
         $teacherId = sanitize_text_field($a['ucitidno']);
-    }
-    // Jinak pokud je zadán stagLogin, použijeme funkci pro získání ID
-    elseif (!empty($a['staglogin'])) {
+    } elseif (!empty($a['staglogin'])) {
         $stagLogin = sanitize_text_field($a['staglogin']);
         $teacherId = stag_get_teacher_id($stagLogin);
         if (!$teacherId) {
             return '<div class="stag-rozvrh-error">Chyba: učitel s loginem ' . esc_html($stagLogin) . ' nebyl nalezen.</div>';
         }
-    }
-    // Pokud ani jeden z parametrů není zadán, zobrazíme chybovou hlášku
-    else {
+    } else {
         return '<div class="stag-rozvrh-error">Musíte zadat buď login učitele (staglogin) nebo ID učitele (ucitidno).</div>';
     }
 
@@ -540,7 +538,7 @@ function stag_rozvrh_shortcode($atts)
 }
 
 /**
- * Widget: STAG Rozvrh Widget
+ * Widget: STAG Rozvrh Widget.
  */
 class Stag_Rozvrh_Widget extends WP_Widget
 {
@@ -556,7 +554,7 @@ class Stag_Rozvrh_Widget extends WP_Widget
     public function widget($args, $instance)
     {
         echo $args['before_widget'];
-        $title     = !empty($instance['title'])     ? $instance['title']     : __('Rozvrh učitele', 'stag-rozvrh');
+        $title     = !empty($instance['title']) ? $instance['title'] : __('Rozvrh učitele', 'stag-rozvrh');
         $stagLogin = !empty($instance['staglogin']) ? $instance['staglogin'] : '';
 
         echo $args['before_title'] . apply_filters('widget_title', $title) . $args['after_title'];
@@ -592,7 +590,7 @@ class Stag_Rozvrh_Widget extends WP_Widget
     public function update($new_instance, $old_instance)
     {
         $instance = array();
-        $instance['title']     = sanitize_text_field($new_instance['title']     ?? '');
+        $instance['title']     = sanitize_text_field($new_instance['title'] ?? '');
         $instance['staglogin'] = sanitize_text_field($new_instance['staglogin'] ?? '');
         return $instance;
     }
@@ -603,3 +601,4 @@ function register_stag_rozvrh_widget()
     register_widget('Stag_Rozvrh_Widget');
 }
 add_action('widgets_init', 'register_stag_rozvrh_widget');
+?>
