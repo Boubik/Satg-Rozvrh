@@ -21,6 +21,11 @@ jobs:
         id: build_date
         run: echo "build_date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_OUTPUT
 
+      - name: Aktualizovat verzi pluginu
+        run: |
+          VERSION="1.0.${{ github.run_number }}"
+          sed -i "s/Version: .*/Version: ${VERSION}/" OBD-Prispevky/index.php
+
       - name: Create ZIP Archive of Plugin
         run: |
           zip -r stag-rozvrh.zip stag-rozvrh
