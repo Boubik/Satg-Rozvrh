@@ -37,7 +37,6 @@ function stag_rozvrh_default_options()
         'cache_duration'  => 1,       // cache duration in days
         'ls_start'        => '02-01', // summer semester start
         'zs_start'        => '09-01', // winter semester start
-        // Removed custom_header
         'custom_row'      => ''
     );
     if (get_option('stag_rozvrh_settings') === false) {
