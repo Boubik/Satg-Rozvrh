@@ -2,6 +2,7 @@
 
 /**
  * Plugin Name: STAG Rozvrh
+ * Plugin URI: https://github.com/Boubik/Satg-Rozvrh
  * Description: Načítá a zobrazuje rozvrh učitelů ze STAG API s možností vlastního formátování výpisu. Lze zobrazit pomocí shortcode [stag_rozvrh] nebo widgetu.
  * Version: 1.0.0
  * Author: Boubik
