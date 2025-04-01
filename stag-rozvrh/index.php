@@ -37,7 +37,8 @@ function stag_rozvrh_default_options()
         'cache_duration'  => 1,       // cache duration in days
         'ls_start'        => '02-01', // summer semester start
         'zs_start'        => '09-01', // winter semester start
-        'custom_row'      => ''
+        'custom_row'      => '',
+        'ignore_ssl'      => false
     );
     if (get_option('stag_rozvrh_settings') === false) {
         add_option('stag_rozvrh_settings', $defaults);
@@ -115,6 +116,7 @@ function stag_rozvrh_render_settings_page()
                 $new_options['ls_start']       = sanitize_text_field($_POST['stag_ls_start'] ?? '');
                 $new_options['zs_start']       = sanitize_text_field($_POST['stag_zs_start'] ?? '');
                 $new_options['custom_row']     = wp_kses_post($_POST['stag_custom_row'] ?? '');
+                $new_options['ignore_ssl'] = !empty($_POST['stag_ignore_ssl']);
                 update_option('stag_rozvrh_settings', $new_options);
                 echo '<div class="updated"><p>Nastavení pluginu bylo uloženo.</p></div>';
 
@@ -166,6 +168,13 @@ function stag_rozvrh_render_settings_page()
                     <td>
                         <input type="url" name="stag_api_url" value="<?php echo esc_attr($api_url); ?>" size="50" />
                         <p class="description">Např. <?php echo esc_html(STAG_ROZVRH_DEFAULT_API_URL); ?></p>
+                    </td>
+                </tr>
+                <tr valign="top">
+                    <th scope="row">Ignorovat neplatné SSL certifikáty</th>
+                    <td>
+                        <input type="checkbox" name="stag_ignore_ssl" value="1" <?php checked(!empty($options['ignore_ssl'])); ?> />
+                        <p class="description">Zaškrtněte, pokud používáte IP adresu nebo server bez platného SSL certifikátu.</p>
                     </td>
                 </tr>
                 <tr valign="top">
@@ -251,6 +260,29 @@ function stag_rozvrh_render_settings_page()
                 ta.value += "\\n";
             });
         </script>
+        <?php
+        if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['stag_rozvrh_test_api'])) {
+            $url = rtrim($api_url, '/') . '/services/rest2/ucitel/getUcitIdnoByStagLogin?stagLogin=test';
+            $response = wp_remote_get($url, array(
+                'sslverify' => empty($options['ignore_ssl']),
+                'headers' => array(
+                    'Authorization' => 'Basic ' . base64_encode($api_user . ':' . $api_pass)
+                ),
+                'timeout' => 10
+            ));
+            if (is_wp_error($response)) {
+                echo '<div class="error"><p>Chyba spojení: ' . esc_html($response->get_error_message()) . '</p></div>';
+            } else {
+                $code = wp_remote_retrieve_response_code($response);
+                echo '<div class="updated"><p>Test API odpověděl s kódem: ' . esc_html($code) . '</p></div>';
+            }
+        }
+        ?>
+        <hr>
+        <h2>Test API spojení</h2>
+        <form method="post">
+            <input type="submit" name="stag_rozvrh_test_api" class="button" value="Otestovat API spojení">
+        </form>
     </div>
     <?php
 }
@@ -319,14 +351,22 @@ function stag_get_teacher_id($stagLogin)
 
     $url = rtrim($api_url, '/') . '/services/rest2/ucitel/getUcitIdnoByStagLogin?stagLogin=' . urlencode($stagLogin);
     $response = wp_remote_get($url, array(
+        'sslverify' => empty($options['ignore_ssl']),
         'headers' => array(
             'Authorization' => 'Basic ' . base64_encode($api_user . ':' . $api_pass)
         ),
         'timeout' => 15
     ));
 
-    if (is_wp_error($response) || wp_remote_retrieve_response_code($response) != 200) {
-        return false;
+    if (is_wp_error($response)) {
+        error_log('[STAG Rozvrh] Chyba připojení: ' . $response->get_error_message());
+        return array('error' => 'Chyba připojení: ' . $response->get_error_message());
+    }
+
+    $code = wp_remote_retrieve_response_code($response);
+    if ($code != 200) {
+        error_log('[STAG Rozvrh] API vrátilo HTTP kód: ' . $code);
+        return array('error' => 'API odpovědělo s kódem: ' . $code);
     }
 
     $body = wp_remote_retrieve_body($response);
@@ -372,6 +412,7 @@ function stag_get_schedule($teacherId, $desired_year, $desired_sem)
     $url .= '&outputFormat=JSON';
 
     $response = wp_remote_get($url, array(
+        'sslverify' => empty($options['ignore_ssl']),
         'headers' => array(
             'Authorization' => 'Basic ' . base64_encode($api_user . ':' . $api_pass),
             'Accept'        => 'application/json'
@@ -529,7 +570,8 @@ function stag_rozvrh_shortcode($atts)
 
     $schedule = stag_get_schedule($teacherId, $desired_year, $desired_sem);
     if (!$schedule || !isset($schedule['data'])) {
-        return '<div class="stag-rozvrh-error">Chyba při načítání rozvrhu učitele.</div>';
+        $error = is_array($schedule) && isset($schedule['error']) ? $schedule['error'] : 'Neznámá chyba';
+        return '<div class="stag-rozvrh-error">Chyba při načítání rozvrhu: ' . esc_html($error) . '</div>';
     }
 
     $settings = get_option('stag_rozvrh_settings', array());
