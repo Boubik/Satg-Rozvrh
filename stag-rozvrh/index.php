@@ -421,12 +421,20 @@ function stag_get_schedule($teacherId, $desired_year, $desired_sem)
     ));
 
     if (is_wp_error($response) || wp_remote_retrieve_response_code($response) != 200) {
+        $backup = get_option('stag_rozvrh_schedule_backup_' . sanitize_key($teacherId . '_' . $desired_year . $desired_sem));
+        if ($backup !== false) {
+            return $backup;
+        }
         return false;
     }
 
     $body = wp_remote_retrieve_body($response);
     $data = json_decode($body, true);
     if ($data === null) {
+        $backup = get_option('stag_rozvrh_schedule_backup_' . sanitize_key($teacherId . '_' . $desired_year . $desired_sem));
+        if ($backup !== false) {
+            return $backup;
+        }
         return false;
     }
 
@@ -442,6 +450,7 @@ function stag_get_schedule($teacherId, $desired_year, $desired_sem)
     $schedule = array('data' => $events);
     set_transient($transient_key, $schedule, $cache_sec);
     update_option('stag_rozvrh_last_update', time());
+    update_option('stag_rozvrh_schedule_backup_' . sanitize_key($teacherId . '_' . $desired_year . $desired_sem), $schedule);
 
     return $schedule;
 }
